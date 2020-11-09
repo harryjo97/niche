@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>GenNBio</title>
+
+<style>
+.grid line {
+    stroke: lightgrey;
+    stroke-opacity: 0.7;
+}
+.lineChart {
+    fill: none;
+    //stroke: steelblue;
+    stroke-width: 1.5px;
+}
+.lineChart:hover {
+    stroke: black;
+    stroke-width: 3px;
+}
+
+.overlay {
+    fill: none;
+    pointer-events: all;
+}
+.focus circle {
+    fill: steelblue;
+}
+
+.tooltip {
+    width: 94px;
+    padding: 4px 10px;
+    border: 1px solid #aaa;
+    border-radius: 4px;
+    box-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    position: absolute;
+    background-color: white;
+    font-size: 14px;
+    pointer-events: none;
+    -webkit-transition: all 0.25s;
+    -moz-transition: all 0.25s;
+    -ms-transition: all 0.25s;
+    -o-transition: all 0.25s;
+    transition: all 0.25s;
+}
+
+.tooltip div {
+    margin: 3px 0;
+}
+
+.tooltip-date, .tooltip-price {
+    font-weight: bold;
+}
+</style>
+
+<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.8.2/jquery.min.js"></script>
+<script src="https://d3js.org/d3.v4.js"></script>
+
+<svg width="1000" height="500"></svg>
+<script>
+  stock_json = {{ stock_json|tojson|safe }}
+
+  var series = ["close","sell","buy"];
+  var parseTime = d3.timeParse("%Y%m%d/%I:%M");
+  var toTime = d3.timeFormat("%Y%m%d%I%M");
+  var keys = d3.keys(stock_json);
+  var parsed_keys = keys.map(function(key){ return toTime(parseTime(key)); })
+  var data = [];
+  series.forEach( function(label){
+    data.push(keys.map(function(key) { return {x: parseTime(key), y: +stock_json[key][label] }; }))
+  });
+  console.log(data);
+  var data_mouse = {};
+  series.forEach( function(label){
+    keys.map( function(key) { data_mouse[parseTime(key)] = +stock_json[key][label] ; } )
+  });
+  console.log(data_mouse);
+
+  var margin = {left: 50, top: 30, right: 50, bottom: 30};
+  var svg = d3.select("svg");
+  var width  = +svg.attr("width") - margin.left - margin.right;
+  var height = +svg.attr("height") - margin.top  - margin.bottom;
+
+  var svgG = svg.append("g")
+      .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+  // x-axis scale
+  var xScale = d3.scaleTime()
+      .domain( d3.extent( keys.map(function(key) { return parseTime(key);}) ) )
+      // .domain( [parseTime("20200921/09:00"),parseTime("20200921/16:00"), parseTime("20200922/09:00"),parseTime("20200922/16:00")] )
+      .rangeRound([0, width/2, width/2 ,width])
+      ;
+  // y-axis scale
+  var yScale = d3.scaleLinear()
+      .domain([
+                d3.min(data, function(d){ return d3.min(d,function(e){return e.y;});})-50,
+                d3.max(data, function(d){ return d3.max(d,function(e){return e.y;});})+50
+               ])
+      .nice()
+      .range([height,0])
+      ;
+
+  var colors = d3.scaleOrdinal(d3.schemeCategory20);
+
+  // x-axis
+  var xAxis = svgG.append("g")
+      .attr("class", "grid")
+      .attr("transform", "translate(0," + height + ")")
+      .call(d3.axisBottom(xScale)
+      );
+  // y-axis
+  var yAxis = svgG.append("g")
+      .attr("class", "grid")
+      //.attr("transform", "translate(0," + margin.left + ")")
+      .call(d3.axisLeft(yScale)
+        // .yTicks(5)
+      );
+
+  // add clipPath : everthing out of this area won't be drawn
+  var clip = svgG.append("defs").append("clipPath")
+      .attr("id", "clip")
+      .append("rect")
+      .attr("width", width )
+      .attr("height", height )
+      .attr("x", 0)
+      .attr("y", 0);
+
+
+  var line = d3.line().curve(d3.curveBasis)
+      .x( function(d) { return xScale(d.x); } )
+      .y( function(d) { return yScale(d.y); } );
+
+  var lineG = svgG.append("g").selectAll("g")
+         .data(data)
+      .enter().append("g");
+
+  lineG.append("path")
+      .attr("class", "lineChart")
+      .attr("stroke", function(d, i) { return colors( series[i] ); } )
+      .attr("clip-path", "url(#clip)")
+      .attr("d", line)
+      ;
+
+  var legend = svgG.append("g")
+      .attr("text-anchor", "end")
+      .selectAll("g")
+      .data(series)
+      .enter().append("g")
+      .attr("transform", function(d, i) { return "translate(0," + i * 20 + ")"; });
+
+  legend.append("rect")
+      .attr("x", width - 15)
+      .attr("width", 10)
+      .attr("height", 10)
+      .attr("fill", colors);
+
+  legend.append("text")
+      .attr("x", width - 20)
+      .attr("y", 10)
+      .attr("dy", "0.3em")
+      .text(function(d) { return d; });
+
+
+  // Zoom with axis
+  var zoom = d3.zoom()
+      .scaleExtent([.9, 20])  // [unzoom, zoom]
+      .extent([[0, 0], [width, height]])
+      .on("zoom", updateChart);
+
+
+  svgG.append("rect")
+      .attr("width", width)
+      .attr("height", height)
+      .style("fill", "none")
+      .style("pointer-events", "all")
+      .attr('transform', 'translate(' + margin.left + ',' + margin.top + ')')
+      .call(zoom)
+      .on("mouseover", function() { focus.style("display", null); tooltip.style("display", null);  })
+      .on("mouseout", function() { focus.style("display", "none"); tooltip.style("display", "none"); })
+      .on("mousemove", mousemove);
+      ;
+
+  function updateChart() {
+
+      // recover new scale
+      var newX = d3.event.transform.rescaleX(xScale);
+      // newX.domain([newX.domain()[0],parseTime("20200921/16:00"), parseTime("20200922/09:00"), newX.domain()[3]]);
+      var newY = d3.event.transform.rescaleY(yScale);
+
+      // update axes with these new boundaries
+      xAxis.call(d3.axisBottom(newX));
+      yAxis.call(d3.axisLeft(newY));
+
+      // update line
+      lineG.select('.lineChart')
+          .attr("d", d3.line().curve(d3.curveBasis)
+              .x(function (d) {
+                  return newX(d.x);
+              })
+              .y(function (d) {
+                  return newY(d.y);
+              })
+          );
+  }
+
+  // tooltip
+    var focus = svg.append("g")
+        .attr("class", "focus")
+        .style("display", "none");
+    focus.append("circle")
+        .attr("r", 5);
+
+    var tooltip = d3.select("svg").append("div")
+        .attr("class", "tooltip")
+        .style("display", "none");
+
+    var tooltipDate = tooltip.append("div")
+        .attr("class", "tooltip-date");
+
+    var tooltipPrice = tooltip.append("div");
+    tooltipPrice.append("span")
+        .attr("class", "tooltip-price")
+        .text("₩: ");
+
+    var tooltipPriceValue = tooltipPrice.append("span")
+        .attr("class", "tooltip-price");
+
+    /*
+    svg.append("rect")
+        .attr("class", "overlay")
+        .attr("width", width)
+        .attr("height", height)
+        .on("mouseover", function() { focus.style("display", null); tooltip.style("display", null);  })
+        .on("mouseout", function() { focus.style("display", "none"); tooltip.style("display", "none"); })
+        .on("mousemove", mousemove); */
+
+    function mousemove() {
+        var key = d3.timeMinute( xScale.invert(d3.mouse(this)[0]) );
+        if(parsed_keys.includes(toTime(key))){
+            var value = data_mouse[key];
+            focus.attr("transform", "translate(" + xScale(key) + "," + yScale(value) + ")");
+            tooltip.attr("style", "left:" + (xScale(key) + 64) + "px;top:" + yScale(value) + "px;");
+            tooltip.select(".tooltip-date").text(key);
+            tooltip.select(".tooltip-price").text(value);
+        }
+
+    }
+
+
+</script>
+
+</head>
+<body>
+
+</body>
+</html>

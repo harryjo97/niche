@@ -1,0 +1,4 @@
+# Ignore following directories
+
+.ipynb_checkpoints/
+flask/.idea/
